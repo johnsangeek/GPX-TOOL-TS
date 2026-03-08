@@ -1,0 +1,26 @@
+# GPX Overlay Backend — Dépendances Python
+# Installation : pip install -r requirements.txt
+
+# Serveur
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.12
+
+# Validation
+pydantic==2.9.0
+
+# Traitement image (rendu widgets)
+Pillow==10.4.0
+
+# Pas de dépendance externe pour le parsing GPX (stdlib xml.etree)
+# ffmpeg et ffprobe doivent être installés sur le système :
+#   macOS  : brew install ffmpeg
+#   Ubuntu : apt install ffmpeg
+
+# Optionnel — pour le stockage de sessions en prod
+# redis==5.0.8
+# celery==5.4.0
+
+# Optionnel — pour les tests
+# pytest==8.3.0
+# httpx==0.27.0

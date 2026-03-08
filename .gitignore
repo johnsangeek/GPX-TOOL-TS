@@ -1,0 +1,20 @@
+# Python
+BACKEND/.venv/
+BACKEND/__pycache__/
+BACKEND/api/__pycache__/
+BACKEND/core/__pycache__/
+BACKEND/.env
+
+# Node
+gpx-overlay-app/node_modules/
+gpx-overlay-app/.expo/
+
+# Système
+.DS_Store
+**/.DS_Store
+
+# Sessions de rendu (données temporaires)
+/tmp/gpx_overlay_sessions/
+
+# Archives
+_ARCHIVES/
