@@ -34,7 +34,7 @@ export default function HomeScreen() {
     setShowModal(false);
     setNewName('');
     // Navigue directement vers step 1
-    router.push({ pathname: '/(project)/step1-source', params: { projectId: p.id } });
+    router.push({ pathname: '/(project)/editor', params: { projectId: p.id } });
   }
 
   async function confirmDelete(id: string, name: string) {
@@ -51,24 +51,14 @@ export default function HomeScreen() {
   }
 
   function openProject(p: Project) {
-    // Reprend là où on s'était arrêté
-    if (!p.sessionId) {
-      router.push({ pathname: '/(project)/step1-source', params: { projectId: p.id } });
-    } else if (!p.syncResult) {
-      router.push({ pathname: '/(project)/step2-videos', params: { projectId: p.id } });
-    } else if (!p.widgetLayout) {
-      router.push({ pathname: '/(project)/step4-widgets', params: { projectId: p.id } });
-    } else {
-      router.push({ pathname: '/(project)/step5-export', params: { projectId: p.id } });
-    }
+    router.push({ pathname: '/(project)/editor', params: { projectId: p.id } });
   }
 
   function stepLabel(p: Project): string {
-    if (!p.sessionId)   return 'Étape 1 — Source GPX';
-    if (!p.clips?.length) return 'Étape 2 — Vidéos';
-    if (!p.syncResult)  return 'Étape 3 — Sync';
-    if (!p.widgetLayout) return 'Étape 4 — Widgets';
-    return 'Étape 5 — Export';
+    if (!p.sessionId)    return '⚡ Ajoutez une source GPX';
+    if (!p.clips?.length) return '🎬 Ajoutez une vidéo';
+    if (!p.widgetLayout?.length) return '🧩 Choisissez des widgets';
+    return `✅ ${p.widgetLayout.length} widget${p.widgetLayout.length > 1 ? 's' : ''} · ${p.clips.length} clip${p.clips.length > 1 ? 's' : ''}`;
   }
 
   function formatDate(iso: string) {

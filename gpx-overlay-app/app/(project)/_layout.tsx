@@ -16,6 +16,7 @@ export default function ProjectLayout() {
       <Stack.Screen name="step4-widgets" options={{ title: 'Widgets' }} />
       <Stack.Screen name="step4-layout"  options={{ title: 'Layout' }} />
       <Stack.Screen name="step5-export"  options={{ title: 'Export' }} />
+      <Stack.Screen name="editor"        options={{ headerShown: false }} />
     </Stack>
   );
 }
