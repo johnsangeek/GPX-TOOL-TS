@@ -13,15 +13,20 @@ Flow complet :
 """
 
 import os
+import uuid
 import urllib.parse
 import urllib.request
 import urllib.error
 import json
 import tempfile
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 router = APIRouter()
+
+# Stockage temporaire des sessions OAuth (state → résultat)
+_oauth_sessions: dict = {}
 
 # ─── Config Strava (variables d'environnement) ────────────────────────────────
 # Créer sur https://www.strava.com/settings/api
@@ -43,33 +48,115 @@ def _check_config():
         )
 
 
-# ─── 1. URL d'autorisation ────────────────────────────────────────────────────
+# ─── 1. Démarre OAuth — génère state + auth_url ───────────────────────────────
 
-@router.get("/auth-url", tags=["Strava"])
-async def get_auth_url():
+@router.get("/start", tags=["Strava"])
+async def start_oauth(callback_base: str):
     """
-    Retourne l'URL Strava OAuth à ouvrir dans le navigateur de l'iPhone.
-    L'app ouvre cette URL via expo-web-browser.
-    Après autorisation, Strava redirige vers gpxoverlay://strava-callback?code=XXX
+    callback_base = URL de base du backend ex: http://192.168.1.117:8000
+    Retourne auth_url à ouvrir dans Safari + state pour le polling.
     """
     _check_config()
+    state = str(uuid.uuid4())
+    redirect_uri = f"{callback_base}/api/v1/strava/callback"
+    _oauth_sessions[state] = {"status": "pending", "redirect_uri": redirect_uri}
     params = urllib.parse.urlencode({
-        "client_id":     STRAVA_CLIENT_ID,
-        "redirect_uri":  REDIRECT_URI,
-        "response_type": "code",
+        "client_id":       STRAVA_CLIENT_ID,
+        "redirect_uri":    redirect_uri,
+        "response_type":   "code",
         "approval_prompt": "auto",
-        "scope":         "activity:read_all",
+        "scope":           "activity:read_all",
+        "state":           state,
     })
     return {
-        "auth_url": f"https://www.strava.com/oauth/authorize?{params}",
-        "redirect_uri": REDIRECT_URI,
+        "auth_url":      f"https://www.strava.com/oauth/authorize?{params}",
+        "state":         state,
+        "redirect_uri":  redirect_uri,
     }
+
+
+# ─── 2. Callback Strava → échange token + stocke résultat ────────────────────
+
+@router.get("/callback", tags=["Strava"])
+async def strava_callback(
+    code: str | None = None,
+    error: str | None = None,
+    state: str | None = None,
+):
+    """
+    Strava redirige ici. On échange le code, stocke le token, affiche page de succès.
+    """
+    if error or not code or not state:
+        if state and state in _oauth_sessions:
+            _oauth_sessions[state] = {"status": "error", "error": error or "missing_code"}
+        return RedirectResponse("https://www.strava.com")  # page neutre
+
+    session = _oauth_sessions.get(state)
+    if not session:
+        raise HTTPException(400, "State invalide ou expiré")
+
+    # Récupère le redirect_uri stocké (même IP que lors du /start)
+    redirect_uri_used = session.get("redirect_uri", REDIRECT_URI)
+
+    payload = urllib.parse.urlencode({
+        "client_id":     STRAVA_CLIENT_ID,
+        "client_secret": STRAVA_CLIENT_SECRET,
+        "code":          code,
+        "grant_type":    "authorization_code",
+        "redirect_uri":  redirect_uri_used,
+    }).encode()
+
+    try:
+        with urllib.request.urlopen(
+            urllib.request.Request(
+                "https://www.strava.com/oauth/token",
+                data=payload,
+                method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            ),
+            timeout=10,
+        ) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        _oauth_sessions[state] = {"status": "error", "error": e.read().decode()}
+        return RedirectResponse("https://www.strava.com")
+
+    _oauth_sessions[state] = {
+        "status":        "done",
+        "access_token":  data["access_token"],
+        "refresh_token": data.get("refresh_token"),
+        "expires_at":    data.get("expires_at"),
+        "athlete": {
+            "id":        data["athlete"]["id"],
+            "firstname": data["athlete"].get("firstname", ""),
+            "lastname":  data["athlete"].get("lastname", ""),
+            "profile":   data["athlete"].get("profile_medium", ""),
+            "city":      data["athlete"].get("city", ""),
+        },
+    }
+    # Page de succès simple — l'utilisateur peut fermer Safari
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse("<html><body style='font-family:sans-serif;text-align:center;padding:60px'>"
+                        "<h2>✅ Connexion Strava réussie !</h2>"
+                        "<p>Retournez dans l'app GPX Overlay.</p></body></html>")
+
+
+# ─── 3. Polling — l'app attend le résultat ────────────────────────────────────
+
+@router.get("/poll/{state}", tags=["Strava"])
+async def poll_oauth(state: str):
+    """L'app poll cet endpoint toutes les 2s jusqu'à status=done."""
+    session = _oauth_sessions.get(state)
+    if not session:
+        raise HTTPException(404, "State inconnu")
+    return session
 
 
 # ─── 2. Échange code → token ──────────────────────────────────────────────────
 
 class TokenExchangeRequest(BaseModel):
     code: str
+    redirect_uri: str | None = None
 
 @router.post("/exchange-token", tags=["Strava"])
 async def exchange_token(req: TokenExchangeRequest):
@@ -85,6 +172,7 @@ async def exchange_token(req: TokenExchangeRequest):
         "client_secret": STRAVA_CLIENT_SECRET,
         "code":          req.code,
         "grant_type":    "authorization_code",
+        "redirect_uri":  req.redirect_uri or REDIRECT_URI,
     }).encode()
 
     try:

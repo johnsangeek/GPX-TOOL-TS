@@ -2,6 +2,7 @@
   "expo": {
     "name": "GPX Overlay",
     "slug": "gpx-overlay-app",
+    "owner": "johnsangeek",
     "scheme": "gpxoverlay",
     "version": "1.0.0",
     "orientation": "portrait",

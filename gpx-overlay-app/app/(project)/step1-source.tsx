@@ -5,14 +5,11 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
-import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { loadProjects, saveProject } from '../../lib/store';
 import { uploadGpxFile } from '../../lib/api';
 import { Project, ActivitySummary } from '../../types';
 import StepNav from '../../components/StepNav';
-
-WebBrowser.maybeCompleteAuthSession();
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
 
@@ -51,36 +48,40 @@ export default function Step1Screen() {
     return projects.find(p => p.id === projectId) ?? null;
   }
 
-  // ── Strava OAuth ─────────────────────────────────────────────────────────────
+  // ── Strava OAuth (polling) ────────────────────────────────────────────────────
   async function connectStrava() {
     setLoading(true);
     setStatus('Connexion à Strava...');
     try {
-      const res = await fetch(`${BASE_URL}/strava/auth-url`);
+      const callbackBase = BASE_URL.replace('/api/v1', '');
+      const res = await fetch(`${BASE_URL}/strava/start?callback_base=${encodeURIComponent(callbackBase)}`);
       if (!res.ok) throw new Error(`API ${res.status}`);
-      const { auth_url } = await res.json();
+      const { auth_url, state } = await res.json() as { auth_url: string; state: string };
 
-      const redirectUrl = Linking.createURL('strava-callback');
-      const result = await WebBrowser.openAuthSessionAsync(auth_url, redirectUrl);
-      if (result.type !== 'success') return;
+      // Ouvre Strava dans Safari — l'utilisateur autorise puis revient dans l'app
+      await Linking.openURL(auth_url);
 
-      const parsed = Linking.parse(result.url);
-      const code = parsed.queryParams?.code as string | undefined;
-      if (!code) { Alert.alert('Erreur', 'Code Strava manquant.'); return; }
+      setStatus('En attente de l\'autorisation Strava...');
 
-      setStatus('Échange du token...');
-      const tokenRes = await fetch(`${BASE_URL}/strava/exchange-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
-      });
-      if (!tokenRes.ok) throw new Error(`Token ${tokenRes.status}`);
-      const tokenData = await tokenRes.json() as { access_token: string; athlete: StravaAthlete };
+      // Polling toutes les 2s jusqu'à status=done (max 2 min)
+      let attempts = 0;
+      while (attempts < 60) {
+        await new Promise(r => setTimeout(r, 2000));
+        attempts++;
+        const pollRes = await fetch(`${BASE_URL}/strava/poll/${state}`);
+        if (!pollRes.ok) continue;
+        const pollData = await pollRes.json() as { status: string; access_token?: string; athlete?: StravaAthlete; error?: string };
 
-      setStravaToken(tokenData.access_token);
-      setAthlete(tokenData.athlete);
-      setStatus('Chargement des activités...');
-      await loadActivities(tokenData.access_token, 1);
+        if (pollData.status === 'error') throw new Error(pollData.error ?? 'Erreur Strava');
+        if (pollData.status === 'done' && pollData.access_token && pollData.athlete) {
+          setStravaToken(pollData.access_token);
+          setAthlete(pollData.athlete);
+          setStatus('Chargement des activités...');
+          await loadActivities(pollData.access_token, 1);
+          return;
+        }
+      }
+      throw new Error('Timeout — autorisation non reçue en 2 minutes');
     } catch (e: unknown) {
       Alert.alert('Erreur Strava', String(e));
     } finally {
